@@ -1,0 +1,30 @@
+Package: fairGNN
+Title: Fairness-Aware Gated Neural Networks
+Version: 0.0.0.9000
+Authors@R: 
+    person("Rhys", "Holland", , "rhys.holland@icloud.com", role = c("aut", "cre"))
+Description: Implements a fairness-aware gated neural network (GNN) 
+    architecture for predictive modelling with bias mitigation. 
+    Includes tools for data preparation, model training, performance 
+    assessment, expert analysis, and visualisation.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports:
+    caret,
+    dplyr,
+    ggalluvial,
+    pROC,
+    purrr,
+    readr,
+    tibble,
+    tidyr,
+    torch,
+    ggplot2,
+    magrittr
+Suggests: 
+    knitr,
+    readxl,
+    rmarkdown
+VignetteBuilder: knitr
