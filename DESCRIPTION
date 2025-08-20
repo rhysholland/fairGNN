@@ -1,6 +1,6 @@
 Package: fairGNN
 Title: Fairness-Aware Gated Neural Networks
-Version: 0.0.0.9000
+Version: 0.1.0
 Authors@R: 
     person("Rhys", "Holland", , "rhys.holland@icloud.com", role = c("aut", "cre"))
 Description: Implements a fairness-aware gated neural network (GNN) 
