@@ -1,0 +1,36 @@
+Function,Argument,Type,Required,Default,Description
+prepare_data,data,data.frame / tibble,Yes,,Raw dataset.
+prepare_data,outcome_var,string,Yes,,"Name of binary outcome column (e.g., 'y', 'hdremit.all')."
+prepare_data,group_var,string,Yes,,"Protected attribute column to analyse (e.g., 'sex', 'race')."
+prepare_data,group_mappings,named vector/list,Yes,,"Map raw group values to 0/1 for modelling (e.g., list('2'=0,'1'=1))."
+prepare_data,cols_to_remove,character vector,No,,"Columns to exclude from features (IDs, outcomes, free text)."
+prepare_data,scale_features,logical,No,TRUE,Z‑score numeric features.
+prepare_data,na_strategy,string,No,omit,Row handling for NA in outcome/group (features may retain NA).
+train_gnn,prepared_data,list,Yes,,Output from prepare_data().
+train_gnn,run_tuning,logical,No,FALSE,"If TRUE, search over tune_grid; else use best_params."
+train_gnn,best_params,data.frame/list,Cond.,,"Fixed hyperparameters when run_tuning=FALSE (lr, hidden_dim, dropout_rate, lambda, temperature)."
+train_gnn,tune_grid,data.frame,Cond.,,Grid of hyperparameters when run_tuning=TRUE.
+train_gnn,num_repeats,integer,No,20,Number of repeated stratified splits.
+train_gnn,epochs,integer,No,300,Training epochs per repeat.
+train_gnn,batch_size,integer,No,64,Mini‑batch size.
+train_gnn,split_prop,numeric (0–1),No,0.8,Train proportion per repeat (test=1-split_prop).
+train_gnn,seed,integer,No,,Random seed for reproducibility.
+train_gnn,stratify_on,string/vector,No,"c('y','group')",Variables to stratify splits on.
+analyse_gnn_results,gnn_results,list,Yes,,Model artefacts & predictions from train_gnn().
+analyse_gnn_results,prepared_data,list,Yes,,Prepared data for truth labels & group.
+analyse_gnn_results,group_mappings,named vector/list,Yes,,"Label mapping for readable plots (e.g., c('0'='Male','1'='Female'))."
+analyse_gnn_results,thresholds,numeric vector,No,,Optional decision thresholds for calibration/fairness summaries.
+analyse_gnn_results,positive_label,integer (0/1),No,1,Value considered 'favourable' for metrics.
+analyse_experts,gnn_results,list,Yes,,Model artefacts inc. gate & expert weights.
+analyse_experts,prepared_data,list,Yes,,Features & group labels used in training.
+analyse_experts,group_mappings,named vector/list,Yes,,Label mapping for group names in outputs.
+analyse_experts,n_permutations,integer,No,50,Permutations for significance of expert differences.
+analyse_experts,top_k,integer,No,20,Top features to report per expert.
+plot_sankey,raw_data,data.frame / tibble,Yes,,Original dataset for node labels and counts.
+plot_sankey,gnn_results,list,Yes,,Gate assignments / predictions from train_gnn().
+plot_sankey,expert_results,list,Yes,,Output of analyse_experts().
+plot_sankey,group_mappings,named vector/list,Yes,,Pretty labels for groups.
+plot_sankey,group_var,string,Yes,,Protected attribute name in raw_data.
+plot_sankey,knot_var,string,No,,"Optional intermediate node (e.g., predicted band)."
+plot_sankey,min_flow,integer,No,0,Hide flows with counts below this.
+plot_sankey,palette,character vector,No,,Custom colours for nodes/links.
