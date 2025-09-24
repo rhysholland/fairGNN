@@ -4,23 +4,31 @@
 \alias{plot_sankey}
 \title{Create a Sankey Plot to Visualise Patient Routing}
 \usage{
-plot_sankey(raw_data, gnn_results, expert_results, group_mappings, group_var)
+plot_sankey(
+  raw_data,
+  gnn_results,
+  expert_results,
+  group_mappings,
+  group_var,
+  verbose = FALSE
+)
 }
 \arguments{
-\item{raw_data}{The original, unscaled dataframe.}
+\item{raw_data}{The original, unscaled dataframe (must contain the features referenced by expert analysis).}
 
-\item{gnn_results}{The results object from \code{train_gnn()}.}
+\item{gnn_results}{The results object from \code{train_gnn()} (uses $final_results and $gate_weights).}
 
 \item{expert_results}{The results object from \code{analyse_experts()}.}
 
-\item{group_mappings}{A named list mapping numeric codes to labels (e.g., \code{list('0' = "Male", '1' = "Female")}).}
+\item{group_mappings}{A named list or named character vector mapping codes to labels (e.g., list('0'="White",'1'="Non-White")).}
 
 \item{group_var}{A string with the column name of the sensitive attribute in the raw_data.}
+
+\item{verbose}{Logical, whether to print progress messages (default FALSE).}
 }
 \value{
 A ggplot object representing the Sankey diagram.
 }
 \description{
-Generates a Sankey diagram showing how patients from different subgroups
-are routed to different experts based on their learned feature profiles.
+Create a Sankey Plot to Visualise Patient Routing
 }

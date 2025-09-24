@@ -8,19 +8,27 @@
 #' @param prepared_data A list object from `prepare_data()`.
 #' @param group_mappings A named list mapping numeric codes to labels.
 #' @param top_n_features The number of top features to visualise.
+#' @param verbose Logical, whether to print progress messages (default FALSE).
 #'
 #' @return A list containing the importance tables and plots.
 #' @export
 #' @import ggplot2
-#' @importFrom dplyr group_by summarise mutate arrange desc left_join filter slice_max
+#' @importFrom dplyr group_by summarise mutate arrange desc left_join filter slice_max where
 #' @importFrom tidyr pivot_wider
 #' @importFrom stats t.test p.adjust
 #' @importFrom purrr map_dfr
 #' @importFrom utils combn
+#' @import ggplot2
+#' @importFrom stats t.test sd
+#' @importFrom pROC roc auc
+#' @importFrom dplyr mutate group_by summarise filter n left_join
+#' @importFrom dplyr where
+#' @importFrom dplyr group_by summarise across n
+#' @importFrom tidyselect all_of
 #'
-analyse_experts <- function(gnn_results, prepared_data, group_mappings, top_n_features = 10) {
+analyse_experts <- function(gnn_results, prepared_data, group_mappings, top_n_features = 10, verbose = FALSE) {
 
-  cat("--- Starting Expert Feature Weight Analysis ---\n")
+  if (verbose) message("Starting Expert Feature Weight Analysis...")
 
   weights_list <- gnn_results$expert_weights
   feature_names <- prepared_data$feature_names
@@ -73,11 +81,69 @@ analyse_experts <- function(gnn_results, prepared_data, group_mappings, top_n_fe
       theme_minimal()
   }
 
-  cat("--- Pairwise Feature Importance Differences Calculated ---\n")
+  if (verbose) message("Pairwise Feature Importance Differences Calculated.")
 
   return(list(
     all_weights = weights_df,
     pairwise_differences = pairwise_results,
     difference_plot = difference_plot
   ))
+}
+
+# ======================================================================
+# New wrapper that augments analyse_gnn_results() with summary tables
+# ======================================================================
+
+#' Analyse GNN Results (+ Gate Summary Tables)
+#'
+#' Wraps `analyse_gnn_results()` and augments the return object with
+#' `gate_weight_summary` and `gate_entropy_summary` computed from
+#' `gnn_results$gate_weights`.
+#'
+#' @param gnn_results A list from `train_gnn()` (must include `$gate_weights`).
+#' @param prepared_data A list from `prepare_data()`.
+#' @param group_mappings A named vector/list mapping group codes to labels.
+#' @param ... Additional arguments passed through to `analyse_gnn_results()`.
+#'
+#' @return The list returned by `analyse_gnn_results()` with two extra elements:
+#'   `gate_weight_summary` and `gate_entropy_summary`.
+#' @export
+#' @importFrom dplyr group_by summarise across n
+#' @importFrom tidyselect all_of
+analyse_gnn_results_plus <- function(gnn_results, prepared_data, group_mappings, ...) {
+  out <- analyse_experts(gnn_results = gnn_results,
+                         prepared_data = prepared_data,
+                         group_mappings = group_mappings,
+                         ...)
+
+  # Add tables from gnn_results$gate_weights
+  gw <- gnn_results$gate_weights
+  if (!is.null(gw)) {
+    gw$group_label <- as.character(gw$group)
+    if (length(names(group_mappings)) > 0) {
+      for (k in names(group_mappings)) {
+        gw$group_label[gw$group_label == k] <- group_mappings[[k]]
+      }
+    }
+    prob_cols <- grep("^gate_prob_expert_", names(gw), value = TRUE)
+
+    out$gate_weight_summary <- gw %>%
+      dplyr::group_by(group_label) %>%
+      dplyr::summarise(dplyr::across(tidyselect::all_of(prob_cols), ~mean(.x, na.rm = TRUE)),
+                       .groups = "drop")
+
+    out$gate_entropy_summary <- gw %>%
+      dplyr::group_by(group_label) %>%
+      dplyr::summarise(
+        mean_entropy = mean(gate_entropy, na.rm = TRUE),
+        sd_entropy   = sd(gate_entropy, na.rm = TRUE),
+        n            = dplyr::n(),
+        .groups = "drop"
+      )
+  } else {
+    out$gate_weight_summary  <- NULL
+    out$gate_entropy_summary <- NULL
+  }
+
+  out
 }

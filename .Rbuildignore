@@ -3,3 +3,20 @@
 ^LICENSE\.md$
 ^doc$
 ^Meta$
+^\.git$              # git repo data
+^\.gitignore$        # gitignore file
+^\.github$           # GitHub Actions etc
+^\.DS_Store$         # macOS cruft
+^\.vscode$           # VS Code project folder if you use it
+^README\.Rmd$        # if you knit a README.Rmd → README.md
+^.*\.Rhistory$       # R history files
+^.*\.RData$          # workspace files
+^.*\.Ruserdata$      # R session data
+^\.httr-oauth$       # tokens
+^outputs$
+^raw_data$
+^scripts$
+^\.DS_Store$        # Mac metadata files
+^Thumbs\.db$        # Windows explorer metadata files
+^\.github$
+^vignettes/data$

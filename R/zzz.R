@@ -5,3 +5,8 @@ if (getRversion() >= "2.15.1")  utils::globalVariables(
     "group_label", "gate_entropy", "Actual_Group", "Feature_Profile",
     "Assigned_Expert", "N", "stratum", "subjectid", "self", ".")
 )
+#' @keywords internal
+#' @importFrom stats complete.cases
+NULL
+
+utils::globalVariables(c("id", "group_A_score", "group_B_score"))

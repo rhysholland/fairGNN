@@ -8,6 +8,8 @@
 #' @param group_var A string with the column name of the sensitive attribute.
 #' @param group_mappings A named list that maps the values in `group_var` to numeric codes (0, 1, 2...). For example, `list("Male" = 0, "Female" = 1)`.
 #' @param cols_to_remove A character vector of column names to exclude from the feature matrix (e.g., IDs, highly collinear vars).
+#' @importFrom dplyr select any_of where
+#' @importFrom magrittr %>%
 #'
 #' @return A list containing:
 #'   \item{X}{The scaled feature matrix.}
@@ -16,7 +18,7 @@
 #'   \item{feature_names}{The names of the features used.}
 #'   \item{subject_ids}{A vector of subject IDs, if a 'subjectid' column exists.}
 #' @export
-#' @importFrom dplyr select any_of
+#' @importFrom dplyr select any_of where
 #' @importFrom magrittr %>%
 #' @examples
 #' # Fictional data example
@@ -54,16 +56,16 @@ prepare_data <- function(data, outcome_var, group_var, group_mappings, cols_to_r
   # Apply the mapping
   group <- as.numeric(mapping_vector[as.character(group_vec_raw)])
 
-
-  if(any(is.na(group))) {
-    stop("NA values found in group vector after mapping. Check that all values in your group_var column are present in the group_mappings list.")
+  if (any(is.na(group))) {
+    stop("NA values found in group vector after mapping.
+         Check that all values in your group_var column are present in the group_mappings list.")
   }
 
   # --- Define Feature Matrix (X) ---
   all_cols_to_remove <- unique(c(outcome_var, group_var, cols_to_remove))
   X <- data %>%
     dplyr::select(-dplyr::any_of(all_cols_to_remove)) %>%
-    dplyr::select(where(is.numeric))
+    dplyr::select(dplyr::where(is.numeric))
 
   feature_names <- colnames(X)
   X <- scale(X)
@@ -71,6 +73,7 @@ prepare_data <- function(data, outcome_var, group_var, group_mappings, cols_to_r
   # --- Extract Subject IDs if they exist ---
   subject_ids <- if ("subjectid" %in% names(data)) data$subjectid else NULL
 
+  # --- Return ---
   return(list(
     X = X,
     y = y,

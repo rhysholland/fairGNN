@@ -2,39 +2,42 @@
 % Please edit documentation in R/train_gnn.R
 \name{train_gnn}
 \alias{train_gnn}
-\title{Train and Evaluate the Gated Neural Network}
+\title{Train and Evaluate the Gated Neural Network (robust splits + safe ROC)}
 \usage{
 train_gnn(
   prepared_data,
   hyper_grid,
   num_repeats = 20,
   epochs = 300,
-  output_dir = "outputs",
+  output_dir = tempdir(),
   run_tuning = TRUE,
-  best_params = NULL
+  best_params = NULL,
+  save_outputs = FALSE,
+  verbose = FALSE
 )
 }
 \arguments{
-\item{prepared_data}{A list object from the \code{prepare_data()} function.}
+\item{prepared_data}{List from prepare_data(): X, y, group, feature_names, subject_ids}
 
-\item{hyper_grid}{A dataframe of hyperparameters to tune. Must include columns:
-\code{lr}, \code{hidden_dim}, \code{dropout_rate}, \code{lambda}, \code{temperature}.}
+\item{hyper_grid}{data.frame with columns: lr, hidden_dim, dropout_rate, lambda, temperature}
 
-\item{num_repeats}{Integer, the number of repeated train/test splits for evaluation.}
+\item{num_repeats}{Integer, repeated train/test splits per combo & final run}
 
-\item{epochs}{Integer, the number of training epochs per run.}
+\item{epochs}{Integer, epochs per run}
 
-\item{output_dir}{A string path to a directory where results will be saved.}
+\item{output_dir}{Directory to write csv/rds (defaults to tempdir())}
 
-\item{run_tuning}{Boolean, whether to run the hyperparameter tuning step.}
+\item{run_tuning}{Logical, run hyperparameter search}
 
-\item{best_params}{A list containing the best parameters (\code{lr}, \code{hidden_dim}, \code{dropout}, \code{lambda}, \code{temperature}) if \code{run_tuning = FALSE}.}
+\item{best_params}{data.frame/list with lr, hidden_dim, dropout_rate, lambda, temperature if run_tuning=FALSE}
+
+\item{save_outputs}{Logical, whether to save outputs to disk (default FALSE)}
+
+\item{verbose}{Logical, whether to print progress messages (default FALSE)}
 }
 \value{
-A list containing detailed results: \code{final_results}, \code{gate_weights},
-\code{expert_weights}, \code{performance_summary}, \code{aif360_data}, and \code{tuning_results}.
+list(final_results, gate_weights, expert_weights, performance_summary, aif360_data, tuning_results)
 }
 \description{
-This function performs a complete training and evaluation run, including
-an optional hyperparameter tuning step and a final evaluation run.
+Train and Evaluate the Gated Neural Network (robust splits + safe ROC)
 }

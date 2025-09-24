@@ -3,26 +3,32 @@ Title: Fairness-Aware Gated Neural Networks
 Version: 0.1.0
 Authors@R: 
     person("Rhys", "Holland", , "rhys.holland@icloud.com", role = c("aut", "cre"))
-Description: Implements a fairness-aware gated neural network (GNN) 
-    architecture for predictive modelling with bias mitigation. 
-    Includes tools for data preparation, model training, performance 
-    assessment, expert analysis, and visualisation.
+Description: Tools for training and analysing fairness-aware gated neural 
+    networks for subgroup-aware prediction and interpretation in clinical datasets. 
+    Methods draw on prior work in mixture-of-experts neural networks 
+    (Jordan and Jacobs, 1994 <https://doi.org/10.1162/neco.1994.6.2.181>), 
+    fairness-aware learning 
+    (Hardt, Price, and Srebro, 2016 <https://dl.acm.org/doi/10.1145/3157382>), 
+    and personalised treatment prediction for depression 
+    (Iniesta, Stahl, and McGuffin, 2016 <https://doi.org/10.1016/j.jpsychres.2016.03.016>).
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports:
-    caret,
-    dplyr,
-    ggalluvial,
-    pROC,
-    purrr,
-    readr,
-    tibble,
-    tidyr,
     torch,
+    dplyr,
+    tibble,
     ggplot2,
-    magrittr
+    readr,
+    pROC,
+    magrittr,
+    tidyr,
+    purrr,
+    utils,
+    stats,
+    ggalluvial,
+    tidyselect
 Suggests: 
     knitr,
     readxl,
@@ -30,3 +36,4 @@ Suggests:
 VignetteBuilder: knitr
 URL: https://github.com/rhysholland/fairGNN
 BugReports: https://github.com/rhysholland/fairGNN/issues
+Depends: R (>= 4.1.0)

@@ -11,7 +11,8 @@ analyse_gnn_results(
   create_roc_plot = TRUE,
   create_calibration_plot = TRUE,
   analyse_gate_weights = TRUE,
-  analyse_gate_entropy = TRUE
+  analyse_gate_entropy = TRUE,
+  verbose = FALSE
 )
 }
 \arguments{
@@ -28,6 +29,8 @@ analyse_gnn_results(
 \item{analyse_gate_weights}{Boolean, if TRUE, performs gate weight analysis (density plot and t-test).}
 
 \item{analyse_gate_entropy}{Boolean, if TRUE, performs gate entropy analysis.}
+
+\item{verbose}{Logical, whether to print progress messages (default FALSE).}
 }
 \value{
 A list containing ggplot objects and analysis tables.

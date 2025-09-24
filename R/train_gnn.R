@@ -1,53 +1,96 @@
-#' Train and Evaluate the Gated Neural Network
+#' Train and Evaluate the Gated Neural Network (robust splits + safe ROC)
 #'
-#' This function performs a complete training and evaluation run, including
-#' an optional hyperparameter tuning step and a final evaluation run.
-#'
-#' @param prepared_data A list object from the `prepare_data()` function.
-#' @param hyper_grid A dataframe of hyperparameters to tune. Must include columns:
-#'                   `lr`, `hidden_dim`, `dropout_rate`, `lambda`, `temperature`.
-#' @param num_repeats Integer, the number of repeated train/test splits for evaluation.
-#' @param epochs Integer, the number of training epochs per run.
-#' @param output_dir A string path to a directory where results will be saved.
-#' @param run_tuning Boolean, whether to run the hyperparameter tuning step.
-#' @param best_params A list containing the best parameters (`lr`, `hidden_dim`, `dropout`, `lambda`, `temperature`) if `run_tuning = FALSE`.
-#'
-#' @return A list containing detailed results: `final_results`, `gate_weights`,
-#'         `expert_weights`, `performance_summary`, `aif360_data`, and `tuning_results`.
+#' @param prepared_data List from prepare_data(): X, y, group, feature_names, subject_ids
+#' @param hyper_grid data.frame with columns: lr, hidden_dim, dropout_rate, lambda, temperature
+#' @param num_repeats Integer, repeated train/test splits per combo & final run
+#' @param epochs Integer, epochs per run
+#' @param output_dir Directory to write csv/rds (defaults to tempdir())
+#' @param run_tuning Logical, run hyperparameter search
+#' @param best_params data.frame/list with lr, hidden_dim, dropout_rate, lambda, temperature if run_tuning=FALSE
+#' @param save_outputs Logical, whether to save outputs to disk (default FALSE)
+#' @param verbose Logical, whether to print progress messages (default FALSE)
+#' @return list(final_results, gate_weights, expert_weights, performance_summary, aif360_data, tuning_results)
 #' @export
 #' @import torch
-#' @importFrom caret createDataPartition
 #' @importFrom pROC roc auc
-#' @importFrom dplyr bind_rows slice_max select mutate group_by summarise
+#' @importFrom dplyr bind_rows slice_max select
 #' @importFrom readr write_csv
 #' @importFrom tibble tibble as_tibble
-#' @importFrom stats sd var
+#' @import torch
+#' @importFrom pROC roc auc
+#' @importFrom dplyr bind_rows slice_max select
+#' @importFrom readr write_csv
+#' @importFrom tibble tibble as_tibble
+#' @importFrom utils capture.output
 #'
-train_gnn <- function(prepared_data, hyper_grid, num_repeats = 20, epochs = 300, output_dir = "outputs", run_tuning = TRUE, best_params = NULL) {
+train_gnn <- function(prepared_data, hyper_grid, num_repeats = 20, epochs = 300,
+                      output_dir = tempdir(), run_tuning = TRUE, best_params = NULL,
+                      save_outputs = FALSE, verbose = FALSE) {
 
-  # Create output directory if it doesn't exist
-  if (!dir.exists(output_dir)) {
-    dir.create(output_dir, recursive = TRUE)
-  }
+  # create output dir only if user explicitly requests saving
+  if (save_outputs && !dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 
-  # Unpack prepared_data for easier access
+  # -------- Unpack --------
   X <- prepared_data$X
-  y <- prepared_data$y
-  group <- prepared_data$group
+  y <- as.numeric(prepared_data$y)      # 0/1 numeric
+  group <- as.numeric(prepared_data$group)
   feature_names <- prepared_data$feature_names
   all_subjectids <- prepared_data$subject_ids
 
-  input_dim  <- ncol(X)
-  num_groups <- length(unique(group))
+  if (!is.matrix(X) && !is.data.frame(X)) stop("prepared_data$X must be a matrix/data.frame")
+  X <- as.matrix(X)
+  if (any(!y %in% c(0,1))) stop("prepared_data$y must be binary 0/1")
+  if (length(y) != nrow(X)) stop("Length of y must equal nrow(X)")
+  if (length(group) != nrow(X)) stop("Length of group must equal nrow(X)")
 
-  # ----------------------------------------------------------------------------------
-  # Helper Function 1: Gated Model Definition
-  # ----------------------------------------------------------------------------------
+  # Drop rows with NA in X/y/group to avoid downstream NA headaches
+  if (anyNA(X) || anyNA(y) || anyNA(group)) {
+    keep <- complete.cases(X) & !is.na(y) & !is.na(group)
+    dropped <- sum(!keep)
+    X <- X[keep, , drop = FALSE]
+    y <- y[keep]
+    group <- group[keep]
+    if (!is.null(all_subjectids)) all_subjectids <- all_subjectids[keep]
+    if (verbose) message(sprintf("[prepare] Dropped %d rows with NA in X/y/group.", dropped))
+  }
+
+  n <- nrow(X); input_dim <- ncol(X)
+  num_groups <- length(unique(group))
+  if (length(unique(y)) < 2L) stop("Only one class present in y; cannot train a classifier.")
+
+  # -------- Manual stratified split (guaranteed both classes in TEST) --------
+  stratified_split_both_in_test <- function(y, test_prop = 0.20, seed = NULL) {
+    if (!is.null(seed)) {
+      old <- .Random.seed
+      set.seed(seed)
+      on.exit({.Random.seed <<- old}, add = TRUE)
+    }
+    idx0 <- which(y == 0); idx1 <- which(y == 1)
+    stopifnot(length(idx0) > 0L && length(idx1) > 0L)
+    n0_test <- max(1L, floor(length(idx0) * test_prop))
+    n1_test <- max(1L, floor(length(idx1) * test_prop))
+    test <- sort(c(sample(idx0, n0_test), sample(idx1, n1_test)))
+    train <- setdiff(seq_along(y), test)
+    list(train = train, test = test)
+  }
+
+  # -------- Safe AUC wrapper --------
+  safe_auc <- function(y_true, probs) {
+    keep <- is.finite(probs) & !is.na(y_true)
+    y_ <- y_true[keep]
+    p_ <- probs[keep]
+    if (length(y_) == 0L) return(NA_real_)
+    if (length(unique(y_)) < 2L) return(NA_real_)
+    ro <- pROC::roc(response = y_, predictor = p_, quiet = TRUE, levels = c(0, 1))
+    as.numeric(pROC::auc(ro))
+  }
+
+  # -------- Model --------
   gated_model <- nn_module(
     "GatedModel",
     initialize = function(input_dim, hidden_dim, num_groups, dropout_p = 0.5) {
       self$gate_layer <- nn_linear(input_dim, num_groups)
-      self$subgroup_layers <- nn_module_list(lapply(1:num_groups, function(i) {
+      self$subgroup_layers <- nn_module_list(lapply(seq_len(num_groups), function(i) {
         nn_sequential(
           nn_linear(input_dim, hidden_dim),
           nn_batch_norm1d(hidden_dim),
@@ -63,211 +106,185 @@ train_gnn <- function(prepared_data, hyper_grid, num_repeats = 20, epochs = 300,
       gate_weights <- nnf_softmax(self$gate_layer(x) / temperature_val, dim = 2)
       subgroup_logits <- lapply(self$subgroup_layers, function(layer) layer(x)$squeeze(2))
       subgroup_logits <- torch_stack(subgroup_logits, dim = 2)
-      output_logits <- torch_sum(gate_weights * subgroup_logits, dim = 2)
-      output_probs <- torch_sigmoid(output_logits)
-      attr(output_probs, "gate_weights") <- gate_weights
-      output_probs
+      output_logits <- torch_sum(gate_weights * subgroup_logits, 2)
+      attr(output_logits, "gate_weights") <- gate_weights
+      output_logits
     }
   )
 
-  # ----------------------------------------------------------------------------------
-  # Helper Function 2: Custom Fairness-Constrained Loss
-  # ----------------------------------------------------------------------------------
-  fairness_constrained_loss <- function(y_pred, y_true, groups, lambda = 1.0) {
-    bce_loss <- nnf_binary_cross_entropy(y_pred, y_true)
-    if (lambda == 0) return(bce_loss)
-
-    epsilon <- 1e-7
-    unique_groups_val <- sort(unique(as.numeric(groups)))
-
-    if (length(unique_groups_val) < 2) return(bce_loss) # No fairness loss if only one group
-
-    soft_tprs <- list()
-    soft_fprs <- list()
-
-    for (g_val in unique_groups_val) {
-      mask <- groups == g_val
-      if (torch_sum(mask)$item() > 0) {
-        y_pred_group <- y_pred[mask]
-        y_true_group <- y_true[mask]
-
-        soft_tp <- torch_sum(y_pred_group * y_true_group)
-        soft_fp <- torch_sum(y_pred_group * (1 - y_true_group))
-        p <- torch_sum(y_true_group)
-        n <- torch_sum(1 - y_true_group)
-
-        soft_tprs[[as.character(g_val)]] <- soft_tp / (p + epsilon)
-        soft_fprs[[as.character(g_val)]] <- soft_fp / (n + epsilon)
+  # -------- Loss --------
+  fairness_constrained_loss <- function(y_logits, y_true, groups, lambda = 1.0) {
+    bce <- nnf_binary_cross_entropy_with_logits(y_logits, y_true)
+    if (lambda == 0) return(bce)
+    eps <- 1e-7
+    y_prob <- torch_sigmoid(y_logits)
+    ug <- sort(unique(as.numeric(groups)))
+    soft_tprs <- list(); soft_fprs <- list()
+    for (g in ug) {
+      m <- (groups == g)
+      if (torch_sum(m)$item() > 0) {
+        yp <- y_prob[m]; yt <- y_true[m]
+        p <- torch_sum(yt); n <- torch_sum(1 - yt)
+        soft_tprs[[as.character(g)]] <- torch_sum(yp * yt) / (p + eps)
+        soft_fprs[[as.character(g)]] <- torch_sum(yp * (1 - yt)) / (n + eps)
       }
     }
-
-    tpr_tensor <- torch_stack(soft_tprs)
-    fpr_tensor <- torch_stack(soft_fprs)
-
-    tpr_variance <- torch_var(tpr_tensor)
-    fpr_variance <- torch_var(fpr_tensor)
-
-    fairness_loss <- tpr_variance + fpr_variance
-
-    return(bce_loss + lambda * fairness_loss)
+    tpr_v <- torch_var(torch_stack(soft_tprs))
+    fpr_v <- torch_var(torch_stack(soft_fprs))
+    bce + lambda * (tpr_v + fpr_v)
   }
 
-
-  # ----------------------------------------------------------------------------------
-  # Hyperparameter Tuning Loop
-  # ----------------------------------------------------------------------------------
-  tuning_results <- tibble()
+  # -------- Tuning --------
+  tuning_results <- tibble::tibble()
   if (run_tuning) {
-    cat("Starting hyperparameter tuning with", nrow(hyper_grid), "combinations...\n")
-    for (j in 1:nrow(hyper_grid)) {
-      params <- hyper_grid[j, ]
-      cat(sprintf("\n--- Testing Combo %d/%d: LR=%.4f, Hidden=%d, Dropout=%.1f, Lambda=%.1f, Temp=%.1f ---\n",
-                  j, nrow(hyper_grid), params$lr, params$hidden_dim, params$dropout_rate, params$lambda, params$temperature))
+    if (missing(hyper_grid) || is.null(hyper_grid) || nrow(hyper_grid) == 0)
+      stop("run_tuning=TRUE but hyper_grid is missing/empty.")
+    need <- c("lr","hidden_dim","dropout_rate","lambda","temperature")
+    if (!all(need %in% names(hyper_grid)))
+      stop("hyper_grid must include: lr, hidden_dim, dropout_rate, lambda, temperature")
 
-      repeat_auc_scores <- c()
-      for (i in seq_len(num_repeats)) {
-        set.seed(111 * i)
-        train_idx <- caret::createDataPartition(y, p = 0.8, list = FALSE)
-        X_train <- X[train_idx, ]; X_test <- X[-train_idx, ]
-        y_train <- y[train_idx]; y_test <- y[-train_idx]
-        group_train <- group[train_idx]
+    if (verbose) message("Starting hyperparameter tuning with ", nrow(hyper_grid), " combinations...")
+    for (j in seq_len(nrow(hyper_grid))) {
+      p <- hyper_grid[j, , drop = FALSE]
+      if (verbose) message(sprintf("Combo %d/%d: LR=%.4g | Hidden=%d | Dropout=%.2f | Lambda=%.2f | Temp=%.2f",
+                                   j, nrow(hyper_grid), p$lr, p$hidden_dim, p$dropout_rate, p$lambda, p$temperature))
+      aucs <- c()
 
-        x_train_t <- torch_tensor(as.matrix(X_train), dtype = torch_float())
-        y_train_t <- torch_tensor(y_train, dtype = torch_float())
-        group_train_t <- torch_tensor(group_train, dtype = torch_float())
-        x_test_t <- torch_tensor(as.matrix(X_test), dtype = torch_float())
+      for (r in seq_len(num_repeats)) {
+        sp <- stratified_split_both_in_test(y, test_prop = 0.20, seed = 1000*j + r)
+        tr <- sp$train; te <- sp$test
 
-        net <- gated_model(input_dim, params$hidden_dim, num_groups, dropout_p = params$dropout_rate)
-        optimiser <- optim_adam(net$parameters, lr = params$lr)
+        Xtr <- X[tr,, drop=FALSE]; Xte <- X[te,, drop=FALSE]
+        ytr <- y[tr]; yte <- y[te]
+        gtr <- group[tr]
 
-        for (epoch in 1:epochs) {
-          net$train()
-          optimiser$zero_grad()
-          out <- net(x_train_t, temperature_val = params$temperature)
-          loss <- fairness_constrained_loss(out, y_train_t, group_train_t, lambda = params$lambda)
-          loss$backward()
-          optimiser$step()
+        xtr   <- torch_tensor(as.matrix(Xtr), dtype = torch_float())
+        ytr_t <- torch_tensor(as.numeric(ytr), dtype = torch_float())
+        gtr_t <- torch_tensor(as.numeric(gtr), dtype = torch_float())
+        xte   <- torch_tensor(as.matrix(Xte), dtype = torch_float())
+
+        net <- gated_model(input_dim, p$hidden_dim, num_groups, dropout_p = p$dropout_rate)
+        opt <- optim_adam(net$parameters, lr = p$lr)
+
+        for (epoch in seq_len(epochs)) {
+          net$train(); opt$zero_grad()
+          logits <- net(xtr, temperature_val = p$temperature)
+          loss <- fairness_constrained_loss(logits, ytr_t, gtr_t, lambda = p$lambda)
+          loss$backward(); opt$step()
         }
 
         net$eval()
-        with_no_grad({
-          probs <- net(x_test_t, temperature_val = params$temperature)
-        })
-        roc_obj <- pROC::roc(response = y_test, predictor = as.numeric(probs), quiet = TRUE, levels = c(0, 1))
-        repeat_auc_scores <- c(repeat_auc_scores, pROC::auc(roc_obj))
+        with_no_grad({ logits_te <- net(xte, temperature_val = p$temperature) })
+        probs <- as.numeric(torch_sigmoid(logits_te))
+        probs[!is.finite(probs)] <- NA_real_
+        probs <- pmin(pmax(probs, 1e-6), 1 - 1e-6)
+
+        aucs <- c(aucs, safe_auc(yte, probs))
       }
-      mean_auc <- mean(repeat_auc_scores, na.rm = TRUE)
-      tuning_results <- dplyr::bind_rows(tuning_results, tibble::as_tibble(c(params, mean_auc = mean_auc)))
-      cat("--- Result for Combo", j, ": Mean AUC =", round(mean_auc, 4), "---\n")
+
+      mean_auc <- mean(aucs, na.rm = TRUE)
+      tuning_results <- dplyr::bind_rows(tuning_results,
+                                         tibble::as_tibble(c(p, mean_auc = mean_auc)))
+      if (verbose) message("Mean AUC: ", ifelse(is.finite(mean_auc), sprintf("%.4f", mean_auc), "NA"))
     }
     best_params <- tuning_results %>% dplyr::slice_max(order_by = mean_auc, n = 1)
-    cat("\n--- Best Performing Combination Found ---\n")
-    print(best_params)
+    if (verbose) { message("Best Performing Combination Found"); utils::capture.output(best_params) |> paste(collapse="\n") |> message() }
   } else {
     if (is.null(best_params)) stop("If run_tuning is FALSE, best_params must be provided.")
-    cat("\n--- Skipping tuning. Using provided parameters: ---\n")
-    print(best_params)
+    best_params <- as.data.frame(best_params)
+    need <- c("lr","hidden_dim","dropout_rate","lambda","temperature")
+    if (!all(need %in% names(best_params)))
+      stop("best_params must include: lr, hidden_dim, dropout_rate, lambda, temperature")
+    if (verbose) { message("Skipping tuning. Using provided parameters."); utils::capture.output(best_params[1, need]) |> paste(collapse="\n") |> message() }
   }
 
+  # -------- Final run with best params --------
+  bp <- best_params
+  final_lr          <- bp$lr[1]
+  final_hidden_dim  <- bp$hidden_dim[1]
+  final_dropout     <- bp$dropout_rate[1]
+  final_lambda      <- bp$lambda[1]
+  final_temperature <- bp$temperature[1]
 
-  # ----------------------------------------------------------------------------------
-  # Final Model Training with Best Hyperparameters
-  # ----------------------------------------------------------------------------------
-  cat("\n--- Starting Final Model Run with Best Parameters ---\n")
-  final_lr <- best_params$lr[1]
-  final_hidden_dim <- best_params$hidden_dim[1]
-  final_dropout <- best_params$dropout_rate[1]
-  final_lambda <- best_params$lambda[1]
-  final_temperature <- best_params$temperature[1]
+  results_list <- list(); gate_weights_list <- list(); expert_weights_list <- list()
 
-  results_list <- list()
-  gate_weights_list <- list()
-  expert_weights_list <- list()
+  for (r in seq_len(num_repeats)) {
+    sp <- stratified_split_both_in_test(y, test_prop = 0.20, seed = 4242 + r)
+    tr <- sp$train; te <- sp$test
 
-  for (i in seq_len(num_repeats)) {
-    set.seed(42 * i)
-    cat(sprintf("Running final iteration %d/%d.\n", i, num_repeats))
-    train_idx <- caret::createDataPartition(y, p = 0.8, list = FALSE)
+    Xtr <- X[tr,, drop=FALSE]; Xte <- X[te,, drop=FALSE]
+    ytr <- y[tr]; yte <- y[te]
+    gtr <- group[tr]; gte <- group[te]
+    subj_te <- if (!is.null(all_subjectids)) all_subjectids[te] else seq_along(yte)
 
-    X_train <- X[train_idx, , drop = FALSE]; X_test <- X[-train_idx, , drop = FALSE]
-    y_train <- y[train_idx]; y_test <- y[-train_idx]
-    group_train <- group[train_idx]; group_test <- group[-train_idx]
-    subjectid_test <- if (!is.null(all_subjectids)) all_subjectids[-train_idx] else 1:length(y_test)
-
-    x_train_t <- torch_tensor(as.matrix(X_train), dtype = torch_float())
-    y_train_t <- torch_tensor(y_train, dtype = torch_float())
-    group_train_t <- torch_tensor(group_train, dtype = torch_float())
-    x_test_t <- torch_tensor(as.matrix(X_test), dtype = torch_float())
+    xtr   <- torch_tensor(as.matrix(Xtr), dtype = torch_float())
+    ytr_t <- torch_tensor(as.numeric(ytr), dtype = torch_float())
+    gtr_t <- torch_tensor(as.numeric(gtr), dtype = torch_float())
+    xte   <- torch_tensor(as.matrix(Xte), dtype = torch_float())
 
     net <- gated_model(input_dim, final_hidden_dim, num_groups, dropout_p = final_dropout)
-    optimiser <- optim_adam(net$parameters, lr = final_lr)
+    opt <- optim_adam(net$parameters, lr = final_lr)
 
-    for (epoch in 1:epochs) {
-      net$train()
-      optimiser$zero_grad()
-      out <- net(x_train_t, temperature_val = final_temperature)
-      loss <- fairness_constrained_loss(out, y_train_t, group_train_t, lambda = final_lambda)
-      loss$backward()
-      optimiser$step()
+    for (epoch in seq_len(epochs)) {
+      net$train(); opt$zero_grad()
+      logits <- net(xtr, temperature_val = final_temperature)
+      loss <- fairness_constrained_loss(logits, ytr_t, gtr_t, lambda = final_lambda)
+      loss$backward(); opt$step()
     }
 
     net$eval()
-    with_no_grad({
-      logits <- net(x_test_t, temperature_val = final_temperature)
-    })
-    probs <- as.numeric(logits)
-    results_list[[i]] <- tibble::tibble(iteration = i, subjectid = subjectid_test, true = y_test, prob = probs, group = group_test)
+    with_no_grad({ logits_te <- net(xte, temperature_val = final_temperature) })
+    probs <- as.numeric(torch_sigmoid(logits_te))
+    probs[!is.finite(probs)] <- NA_real_
+    probs <- pmin(pmax(probs, 1e-6), 1 - 1e-6)
 
-    gate_w_matrix <- as.matrix(attr(logits, "gate_weights"))
-    gate_entropy <- as.numeric(-rowSums(gate_w_matrix * log(gate_w_matrix + 1e-10)))
-    expert_weights_list[[i]] <- lapply(net$subgroup_layers, function(layer) as.numeric(layer[[1]]$weight))
+    gw <- attr(logits_te, "gate_weights")
+    gw_mat <- as.array(gw)
+    gate_entropy <- as.numeric(-rowSums(gw_mat * log(gw_mat + 1e-10)))
+    expert_weights_list[[r]] <- lapply(net$subgroup_layers, function(layer) as.numeric(layer[[1]]$weight))
 
-    # Dynamically create gate probability columns
-    gate_probs_df <- as.data.frame(gate_w_matrix)
-    names(gate_probs_df) <- paste0("gate_prob_expert_", 0:(num_groups-1))
+    gate_probs_df <- as.data.frame(gw_mat)
+    names(gate_probs_df) <- paste0("gate_prob_expert_", 0:(num_groups - 1))
 
-    gate_weights_list[[i]] <- dplyr::bind_cols(
-      tibble::tibble(
-        iteration = i, subjectid = subjectid_test, group = group_test,
-        gate_entropy = gate_entropy
-      ),
+    results_list[[r]] <- tibble::tibble(
+      iteration = r, subjectid = subj_te, true = yte, prob = probs, group = gte
+    )
+    gate_weights_list[[r]] <- dplyr::bind_cols(
+      tibble::tibble(iteration = r, subjectid = subj_te, group = gte, gate_entropy = gate_entropy),
       gate_probs_df
     )
   }
 
-  # ----------------------------------------------------------------------------------
-  # Collate and Save Results
-  # ----------------------------------------------------------------------------------
   final_results <- dplyr::bind_rows(results_list)
-  gate_weights <- dplyr::bind_rows(gate_weights_list)
+  gate_weights  <- dplyr::bind_rows(gate_weights_list)
 
-  roc_all <- pROC::roc(response = final_results$true, predictor = final_results$prob, quiet = TRUE, levels = c(0, 1))
-  auc_final <- as.numeric(pROC::auc(roc_all))
+  auc_final <- if (length(unique(final_results$true)) >= 2L) {
+    safe_auc(final_results$true, final_results$prob)
+  } else NA_real_
   brier_final <- mean((final_results$true - final_results$prob)^2)
-  cat(sprintf("\nFinal Overall AUC Across All Test Repeats: %.4f\n", auc_final))
-  cat(sprintf("Final Overall Brier Score Across All Test Repeats: %.4f\n", brier_final))
 
-  performance_summary <- tibble::tibble(Metric = c("AUC", "Brier Score"), Value = c(auc_final, brier_final))
+  performance_summary <- tibble::tibble(
+    Metric = c("AUC", "Brier Score"),
+    Value  = c(auc_final, brier_final)
+  )
 
   aif360_data <- final_results %>%
     dplyr::select(subjectid, true_label = true, predicted_prob = prob, sensitive_attr_numeric = group)
 
-  # Save outputs to files
-  readr::write_csv(final_results, file.path(output_dir, "gnn_final_predictions.csv"))
-  readr::write_csv(gate_weights, file.path(output_dir, "gnn_gate_weights.csv"))
-  readr::write_csv(aif360_data, file.path(output_dir, "gnn_aif360_data.csv"))
-  if (run_tuning) {
-    readr::write_csv(tuning_results, file.path(output_dir, "gnn_tuning_results.csv"))
+  if (save_outputs) {
+    readr::write_csv(final_results, file.path(output_dir, "gnn_final_predictions.csv"))
+    readr::write_csv(gate_weights,  file.path(output_dir, "gnn_gate_weights.csv"))
+    readr::write_csv(aif360_data,   file.path(output_dir, "gnn_aif360_data.csv"))
+    if (run_tuning) readr::write_csv(tuning_results, file.path(output_dir, "gnn_tuning_results.csv"))
+    saveRDS(expert_weights_list, file.path(output_dir, "gnn_expert_weights.rds"))
   }
-  saveRDS(expert_weights_list, file.path(output_dir, "gnn_expert_weights.rds"))
 
-  # Return a comprehensive list of results
-  return(list(
+  list(
     final_results = final_results,
     gate_weights = gate_weights,
     expert_weights = expert_weights_list,
     performance_summary = performance_summary,
     aif360_data = aif360_data,
-    tuning_results = if(run_tuning) tuning_results else "Tuning was skipped"
-  ))
+    tuning_results = if (run_tuning) tuning_results else "Tuning was skipped"
+  )
 }

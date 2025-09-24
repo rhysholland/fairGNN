@@ -1,26 +1,36 @@
 #' Create a Sankey Plot to Visualise Patient Routing
 #'
-#' Generates a Sankey diagram showing how patients from different subgroups
-#' are routed to different experts based on their learned feature profiles.
-#'
-#' @param raw_data The original, unscaled dataframe.
-#' @param gnn_results The results object from `train_gnn()`.
+#' @param raw_data The original, unscaled dataframe (must contain the features referenced by expert analysis).
+#' @param gnn_results The results object from `train_gnn()` (uses $final_results and $gate_weights).
 #' @param expert_results The results object from `analyse_experts()`.
-#' @param group_mappings A named list mapping numeric codes to labels (e.g., `list('0' = "Male", '1' = "Female")`).
+#' @param group_mappings A named list or named character vector mapping codes to labels (e.g., list('0'="White",'1'="Non-White")).
 #' @param group_var A string with the column name of the sensitive attribute in the raw_data.
-#'
+#' @param verbose Logical, whether to print progress messages (default FALSE).
 #' @return A ggplot object representing the Sankey diagram.
 #' @export
 #' @import ggplot2
-#' @importFrom dplyr group_by summarise n arrange desc slice pull left_join mutate case_when filter select
-#' @importFrom ggalluvial geom_alluvium geom_stratum
+#' @import ggalluvial
+#' @importFrom dplyr group_by summarise n arrange desc slice pull left_join mutate filter select rename
+#' @importFrom ggalluvial geom_alluvium geom_stratum stat_stratum
+#' @import ggplot2
+#' @import ggalluvial
+#' @importFrom dplyr group_by summarise n arrange desc slice pull left_join mutate filter select rename
+#' @importFrom ggalluvial geom_alluvium geom_stratum stat_stratum
 #'
-plot_sankey <- function(raw_data, gnn_results, expert_results, group_mappings, group_var) {
+plot_sankey <- function(raw_data, gnn_results, expert_results, group_mappings, group_var, verbose = FALSE) {
 
-  cat("--- Generating Sankey Plot ---\n")
+  if (verbose) message("Generating Sankey Plot...")
 
-  # --- 1. Identify Key Opposing Features from expert analysis ---
-  # This version correctly finds the two most extreme features across all pairwise comparisons
+  # -- Ensure we have a subject id in raw_data (subjectid preferred; else id) --
+  if ("subjectid" %in% names(raw_data)) {
+    raw_keyed <- raw_data
+  } else if ("id" %in% names(raw_data)) {
+    raw_keyed <- dplyr::rename(raw_data, subjectid = id)
+  } else {
+    stop("plot_sankey(): raw_data must contain either a 'subjectid' or an 'id' column.")
+  }
+
+  # -- Identify two most “opposite” features (binary case expected) --
   all_diffs <- do.call(rbind, expert_results$pairwise_differences)
 
   group_A_features <- all_diffs %>%
@@ -35,40 +45,88 @@ plot_sankey <- function(raw_data, gnn_results, expert_results, group_mappings, g
     dplyr::pull(feature) %>%
     unique()
 
-  # --- 2. Prepare Data for Plotting ---
-  sankey_data_raw <- raw_data %>%
-    dplyr::mutate(
-      group_A_score = rowSums(dplyr::select(., dplyr::all_of(group_A_features)), na.rm = TRUE),
-      group_B_score = rowSums(dplyr::select(., dplyr::all_of(group_B_features)), na.rm = TRUE)
-    ) %>%
-    dplyr::mutate(
-      Feature_Profile = dplyr::case_when(
-        group_A_score > group_B_score ~ "Profile A",
-        TRUE ~ "Profile B"
-      )
-    )
+  haveA <- group_A_features[group_A_features %in% names(raw_keyed)]
+  haveB <- group_B_features[group_B_features %in% names(raw_keyed)]
+  if (length(haveA) == 0L && length(haveB) == 0L) {
+    stop("plot_sankey(): none of the selected opposing features were found in raw_data.")
+  }
 
-  plot_data <- gnn_results$gate_weights %>%
+  # -- Build feature-profile table from RAW DATA --
+  sankey_data_raw <- raw_keyed %>%
+    dplyr::mutate(
+      group_A_score = if (length(haveA)) rowSums(dplyr::select(., dplyr::all_of(haveA)), na.rm = TRUE) else 0,
+      group_B_score = if (length(haveB)) rowSums(dplyr::select(., dplyr::all_of(haveB)), na.rm = TRUE) else 0,
+      Feature_Profile = ifelse(group_A_score > group_B_score, "Profile A", "Profile B")
+    ) %>%
+    dplyr::select(subjectid, Feature_Profile, dplyr::all_of(group_var))
+
+  # -- Subject ids and group labels from model outputs --
+  if (is.null(gnn_results$final_results) || !"subjectid" %in% names(gnn_results$final_results)) {
+    stop("plot_sankey(): gnn_results$final_results must contain 'subjectid'.")
+  }
+  final_preds <- gnn_results$final_results %>%
+    dplyr::select(subjectid, group)
+
+  # ==== SAFE GROUP LABEL MAPPING — NO case_when ====
+  final_preds$group_chr <- as.character(final_preds$group)
+  gm <- as.character(unlist(group_mappings, use.names = TRUE))
+  names(gm) <- names(group_mappings)
+
+  if (is.null(names(gm)) || anyNA(names(gm))) {
+    unique_codes <- sort(unique(final_preds$group_chr))
+    names(gm) <- unique_codes[seq_along(gm)]
+  }
+
+  mapped <- gm[final_preds$group_chr]
+  mapped[is.na(mapped)] <- final_preds$group_chr[is.na(mapped)]
+  final_preds$Actual_Group <- mapped
+  # ================================================
+
+  # -- Join by subjectid (gate weights + final preds + raw feature profile) --
+  gw <- gnn_results$gate_weights
+  if (is.null(gw) || !"subjectid" %in% names(gw)) {
+    stop("plot_sankey(): Could not find 'subjectid' in gnn_results$gate_weights. Ensure train_gnn() saves subject IDs.")
+  }
+
+  sankey_joined <- gw %>%
+    dplyr::select(subjectid, dplyr::starts_with("gate_prob_expert_"), gate_entropy) %>%
+    dplyr::left_join(final_preds[, c("subjectid","Actual_Group")], by = "subjectid") %>%
     dplyr::left_join(sankey_data_raw, by = "subjectid") %>%
-    dplyr::mutate(
-      # This logic assumes a binary expert assignment for visualisation simplicity
-      Assigned_Expert = ifelse(gate_prob_expert_1 >= 0.5,
-                               paste(group_mappings[[2]], "Expert"),
-                               paste(group_mappings[[1]], "Expert")),
-      Actual_Group = as.character(group_mappings[as.character(group)])
-    ) %>%
-    dplyr::filter(!is.na(Actual_Group) & !is.na(Feature_Profile))
+    dplyr::filter(!is.na(Actual_Group), !is.na(Feature_Profile))
 
-  # --- 3. Create the Plot ---
-  sankey_flow_counts <- plot_data %>%
+  # -- Assign expert by max gate probability (binary simplifies to >= 0.5) --
+  prob_cols <- grep("^gate_prob_expert_", names(sankey_joined), value = TRUE)
+  if (length(prob_cols) < 2L) stop("Sankey requires at least two experts (found ", length(prob_cols), ").")
+
+  if (length(prob_cols) == 2L) {
+    assigned <- ifelse(sankey_joined[[prob_cols[2]]] >= 0.5, 2L, 1L)
+  } else {
+    assigned <- apply(sankey_joined[, prob_cols, drop = FALSE], 1, function(r) which.max(r))
+  }
+
+  # Expert labels using mapping if available; else “Expert k”
+  expert_labels <- {
+    labs <- unname(as.character(unlist(group_mappings, use.names = FALSE)))
+    if (!length(labs)) paste("Expert", seq_along(prob_cols))
+    else if (length(labs) >= length(prob_cols)) labs[seq_along(prob_cols)]
+    else paste("Expert", seq_along(prob_cols))
+  }
+
+  sankey_plot_data <- sankey_joined %>%
+    dplyr::mutate(Assigned_Expert = paste0(expert_labels[assigned], " Expert"))
+
+  # -- Count flows and plot --
+  sankey_flow_counts <- sankey_plot_data %>%
     dplyr::group_by(Actual_Group, Feature_Profile, Assigned_Expert) %>%
     dplyr::summarise(N = dplyr::n(), .groups = "drop")
 
-  sankey_plot <- ggplot(sankey_flow_counts,
-                        aes(axis1 = Actual_Group, axis2 = Feature_Profile, axis3 = Assigned_Expert, y = N)) +
+  p <- ggplot(
+    sankey_flow_counts,
+    aes(axis1 = Actual_Group, axis2 = Feature_Profile, axis3 = Assigned_Expert, y = N)
+  ) +
     ggalluvial::geom_alluvium(aes(fill = Actual_Group), width = 1/8, alpha = 0.7) +
     ggalluvial::geom_stratum(width = 1/8, fill = "grey90", colour = "black") +
-    geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 3.5) +
+    ggalluvial::stat_stratum(geom = "text", aes(label = after_stat(stratum)), size = 3.5) +
     scale_x_discrete(limits = c("Actual Group", "Learned Feature Profile", "Assigned Expert")) +
     labs(
       title = "Patient Routing Based on Feature Profile and Subgroup",
@@ -77,5 +135,5 @@ plot_sankey <- function(raw_data, gnn_results, expert_results, group_mappings, g
     ) +
     theme_minimal()
 
-  return(sankey_plot)
+  return(p)
 }

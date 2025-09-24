@@ -9,6 +9,7 @@
 #' @param create_calibration_plot Boolean, if TRUE, generates and returns a calibration plot.
 #' @param analyse_gate_weights Boolean, if TRUE, performs gate weight analysis (density plot and t-test).
 #' @param analyse_gate_entropy Boolean, if TRUE, performs gate entropy analysis.
+#' @param verbose Logical, whether to print progress messages (default FALSE).
 #'
 #' @return A list containing ggplot objects and analysis tables.
 #' @export
@@ -16,12 +17,19 @@
 #' @importFrom stats t.test sd
 #' @importFrom pROC roc auc
 #' @importFrom dplyr mutate group_by summarise filter n left_join
+#' @importFrom dplyr where
+#' @import ggplot2
+#' @importFrom stats t.test sd
+#' @importFrom pROC roc auc
+#' @importFrom dplyr mutate group_by summarise filter n left_join
+#' @importFrom dplyr where
 #'
 analyse_gnn_results <- function(gnn_results, prepared_data, group_mappings,
                                 create_roc_plot = TRUE,
                                 create_calibration_plot = TRUE,
                                 analyse_gate_weights = TRUE,
-                                analyse_gate_entropy = TRUE) {
+                                analyse_gate_entropy = TRUE,
+                                verbose = FALSE) {
 
   # --- Input validation ---
   if (!all(c("final_results", "performance_summary", "gate_weights") %in% names(gnn_results))) {
@@ -39,7 +47,7 @@ analyse_gnn_results <- function(gnn_results, prepared_data, group_mappings,
 
   # --- 1. ROC Curve Plot ---
   if (create_roc_plot) {
-    cat("Generating ROC Plot...\n")
+    if (verbose) message("Generating ROC Plot...")
     roc_data <- results_all %>%
       dplyr::mutate(true_factor = factor(true, levels = c(0, 1)))
 
@@ -61,7 +69,7 @@ analyse_gnn_results <- function(gnn_results, prepared_data, group_mappings,
 
   # --- 2. Calibration Plot ---
   if (create_calibration_plot) {
-    cat("Generating Calibration Plot...\n")
+    if (verbose) message("Generating Calibration Plot...")
     calibration_data <- results_all %>%
       dplyr::mutate(prob_bin = cut(prob, breaks = seq(0, 1, by = 0.1), include.lowest = TRUE)) %>%
       dplyr::group_by(prob_bin) %>%
@@ -89,7 +97,7 @@ analyse_gnn_results <- function(gnn_results, prepared_data, group_mappings,
 
   # --- 3. Gate Weight Analysis ---
   if (analyse_gate_weights) {
-    cat("Performing Gate Weight Analysis...\n")
+    if (verbose) message("Performing Gate Weight Analysis...")
     gate_density_plot <- ggplot(gate_data, aes(x = gate_prob_expert_1, fill = group_label)) +
       geom_density(alpha = 0.7) +
       labs(
@@ -110,7 +118,7 @@ analyse_gnn_results <- function(gnn_results, prepared_data, group_mappings,
 
   # --- 4. Gate Entropy Analysis ---
   if (analyse_gate_entropy) {
-    cat("Performing Gate Entropy Analysis...\n")
+    if (verbose) message("Performing Gate Entropy Analysis...")
     if (!"gate_entropy" %in% names(gate_data)) {
       warning("gate_entropy not found in results. Did you use the latest train_gnn function?")
     } else {
@@ -133,6 +141,6 @@ analyse_gnn_results <- function(gnn_results, prepared_data, group_mappings,
     }
   }
 
-  cat("Analysis complete.\n")
+  if (verbose) message("Analysis complete.")
   return(output_list)
 }

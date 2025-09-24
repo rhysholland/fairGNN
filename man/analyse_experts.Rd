@@ -8,7 +8,8 @@ analyse_experts(
   gnn_results,
   prepared_data,
   group_mappings,
-  top_n_features = 10
+  top_n_features = 10,
+  verbose = FALSE
 )
 }
 \arguments{
@@ -19,6 +20,8 @@ analyse_experts(
 \item{group_mappings}{A named list mapping numeric codes to labels.}
 
 \item{top_n_features}{The number of top features to visualise.}
+
+\item{verbose}{Logical, whether to print progress messages (default FALSE).}
 }
 \value{
 A list containing the importance tables and plots.
