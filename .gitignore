@@ -1,9 +1,17 @@
-.Rproj.user
-inst/doc
-/doc/
-/Meta/
+# build artifacts
+*.tar.gz
 .Rhistory
-.Rdata
-.httr-oauth
+.Rproj.user/
 .DS_Store
-.quarto
+
+# unwanted folders
+raw_data/
+outputs/
+scripts/
+doc/
+inst/
+man/
+Meta/
+
+# optional: ignore release zips/tars you upload
+*.zip
