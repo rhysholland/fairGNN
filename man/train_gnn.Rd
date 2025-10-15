@@ -13,6 +13,7 @@ train_gnn(
   run_tuning = TRUE,
   best_params = NULL,
   save_outputs = FALSE,
+  seed = NULL,
   verbose = FALSE
 )
 }
@@ -32,6 +33,8 @@ train_gnn(
 \item{best_params}{data.frame/list with lr, hidden_dim, dropout_rate, lambda, temperature if run_tuning=FALSE}
 
 \item{save_outputs}{Logical, whether to save outputs to disk (default FALSE)}
+
+\item{seed}{Optional seed for reproducible data splits. Defaults to NULL to respect the current RNG state.}
 
 \item{verbose}{Logical, whether to print progress messages (default FALSE)}
 }

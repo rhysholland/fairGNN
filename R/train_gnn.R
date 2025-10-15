@@ -8,6 +8,7 @@
 #' @param run_tuning Logical, run hyperparameter search
 #' @param best_params data.frame/list with lr, hidden_dim, dropout_rate, lambda, temperature if run_tuning=FALSE
 #' @param save_outputs Logical, whether to save outputs to disk (default FALSE)
+#' @param seed Optional seed for reproducible data splits. Defaults to NULL to respect the current RNG state.
 #' @param verbose Logical, whether to print progress messages (default FALSE)
 #' @return list(final_results, gate_weights, expert_weights, performance_summary, aif360_data, tuning_results)
 #' @export
@@ -16,19 +17,30 @@
 #' @importFrom dplyr bind_rows slice_max select
 #' @importFrom readr write_csv
 #' @importFrom tibble tibble as_tibble
-#' @import torch
-#' @importFrom pROC roc auc
-#' @importFrom dplyr bind_rows slice_max select
-#' @importFrom readr write_csv
-#' @importFrom tibble tibble as_tibble
 #' @importFrom utils capture.output
+#'
 #'
 train_gnn <- function(prepared_data, hyper_grid, num_repeats = 20, epochs = 300,
                       output_dir = tempdir(), run_tuning = TRUE, best_params = NULL,
-                      save_outputs = FALSE, verbose = FALSE) {
+                      save_outputs = FALSE, seed = NULL, verbose = FALSE) {
 
   # create output dir only if user explicitly requests saving
   if (save_outputs && !dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+  if (!is.null(seed)) {
+    if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed)) {
+      stop("seed must be a single finite numeric value or NULL.")
+    }
+    seed <- as.integer(seed)
+    if (is.na(seed)) stop("seed must be coercible to an integer.")
+  }
+  base_seed <- seed
+  seed_counter <- -1L
+  next_split_seed <- function() {
+    if (is.null(base_seed)) return(NULL)
+    seed_counter <<- seed_counter + 1L
+    base_seed + seed_counter
+  }
 
   # -------- Unpack --------
   X <- prepared_data$X
@@ -61,9 +73,24 @@ train_gnn <- function(prepared_data, hyper_grid, num_repeats = 20, epochs = 300,
   # -------- Manual stratified split (guaranteed both classes in TEST) --------
   stratified_split_both_in_test <- function(y, test_prop = 0.20, seed = NULL) {
     if (!is.null(seed)) {
-      old <- .Random.seed
+      if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed)) {
+        stop("seed must be a single finite numeric value or NULL.")
+      }
+      seed <- as.integer(seed)
+      if (is.na(seed)) stop("seed must be coercible to an integer.")
+      restore_rng <- if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+        old_seed <- get(".Random.seed", envir = .GlobalEnv)
+        function() assign(".Random.seed", old_seed, envir = .GlobalEnv)
+      } else {
+        function() {
+          if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+            rm(".Random.seed", envir = .GlobalEnv)
+          }
+        }
+      }
+      on.exit(restore_rng(), add = TRUE)
       set.seed(seed)
-      on.exit({.Random.seed <<- old}, add = TRUE)
+
     }
     idx0 <- which(y == 0); idx1 <- which(y == 1)
     stopifnot(length(idx0) > 0L && length(idx1) > 0L)
@@ -151,7 +178,8 @@ train_gnn <- function(prepared_data, hyper_grid, num_repeats = 20, epochs = 300,
       aucs <- c()
 
       for (r in seq_len(num_repeats)) {
-        sp <- stratified_split_both_in_test(y, test_prop = 0.20, seed = 1000*j + r)
+        split_seed <- next_split_seed()
+        sp <- stratified_split_both_in_test(y, test_prop = 0.20, seed = split_seed)
         tr <- sp$train; te <- sp$test
 
         Xtr <- X[tr,, drop=FALSE]; Xte <- X[te,, drop=FALSE]
@@ -209,7 +237,8 @@ train_gnn <- function(prepared_data, hyper_grid, num_repeats = 20, epochs = 300,
   results_list <- list(); gate_weights_list <- list(); expert_weights_list <- list()
 
   for (r in seq_len(num_repeats)) {
-    sp <- stratified_split_both_in_test(y, test_prop = 0.20, seed = 4242 + r)
+    split_seed <- next_split_seed()
+    sp <- stratified_split_both_in_test(y, test_prop = 0.20, seed = split_seed)
     tr <- sp$train; te <- sp$test
 
     Xtr <- X[tr,, drop=FALSE]; Xte <- X[te,, drop=FALSE]

@@ -20,7 +20,9 @@ plot_sankey(
 
 \item{expert_results}{The results object from \code{analyse_experts()}.}
 
-\item{group_mappings}{A named list or named character vector mapping codes to labels (e.g., list('0'="White",'1'="Non-White")).}
+\item{group_mappings}{A named list or named character vector mapping \emph{codes} to \emph{labels}
+(e.g., c("0"="Male","1"="Female")). If provided in the reverse orientation (labels→codes),
+or unnamed, this function will normalise it automatically.}
 
 \item{group_var}{A string with the column name of the sensitive attribute in the raw_data.}
 

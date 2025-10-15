@@ -10,3 +10,8 @@ if (getRversion() >= "2.15.1")  utils::globalVariables(
 NULL
 
 utils::globalVariables(c("id", "group_A_score", "group_B_score"))
+
+# internal helper
+.inform <- function(..., .verbose = FALSE) {
+  if (isTRUE(.verbose)) message(...)
+}

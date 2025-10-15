@@ -5,12 +5,11 @@ Authors@R:
     person("Rhys", "Holland", , "rhys.holland@icloud.com", role = c("aut", "cre"))
 Description: Tools for training and analysing fairness-aware gated neural 
     networks for subgroup-aware prediction and interpretation in clinical datasets. 
-    Methods draw on prior work in mixture-of-experts neural networks 
-    (Jordan and Jacobs, 1994 <https://doi.org/10.1162/neco.1994.6.2.181>), 
-    fairness-aware learning 
-    (Hardt, Price, and Srebro, 2016 <https://dl.acm.org/doi/10.1145/3157382>), 
-    and personalised treatment prediction for depression 
-    (Iniesta, Stahl, and McGuffin, 2016 <https://doi.org/10.1016/j.jpsychres.2016.03.016>).
+    Methods draw on prior work in mixture-of-experts neural networks by
+    Jordan and Jacobs (1994) <doi:10.1162/neco.1994.6.2.181>,
+    fairness-aware learning by Hardt, Price, and Srebro (2016) <doi:10.1145/3157382>,
+    and personalised treatment prediction for depression by Iniesta, Stahl, and McGuffin (2016) 
+    <doi:10.1016/j.jad.2016.03.016>.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

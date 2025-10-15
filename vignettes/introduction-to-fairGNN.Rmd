@@ -27,11 +27,11 @@ This vignette demonstrates the full workflow using the GENDEP dataset to predict
 
 The package is built around a logical sequence of functions:
 
-- `prepare_data()`: Cleans and prepares the input data.  
-- `train_gnn()`: Trains the Gated Neural Network.  
-- `analyse_gnn_results()`: Conducts performance and gate analysis.  
-- `analyse_experts()`: Performs analysis of expert specialisation.  
-- `plot_sankey()`: Visualises the model's patient routing behaviour.  
+-   `prepare_data()`: Cleans and prepares the input data.\
+-   `train_gnn()`: Trains the Gated Neural Network.\
+-   `analyse_gnn_results()`: Conducts performance and gate analysis.\
+-   `analyse_experts()`: Performs analysis of expert specialisation.\
+-   `plot_sankey()`: Visualises the model's patient routing behaviour.
 
 ## 2.1. Loading Data
 
@@ -40,7 +40,6 @@ First, we load the necessary libraries and the dataset.
 ```{r}
 library(fairGNN)
 library(dplyr)
-library(readxl)
 
 # For a reproducible vignette, we create a dummy dataframe.
 # A user would load their own data here.
@@ -85,8 +84,10 @@ For a fast and reliable vignette, we load pre-computed results from a `train_gnn
 ```{r}
 # In a real analysis, a user would run train_gnn() here.
 # For the vignette, we load the results saved by the create_vignette_data.R script.
-gnn_results <- readRDS("data/gnn_results.rds")
-expert_analyses <- readRDS("data/expert_analyses.rds")
+gnn_results_path <- system.file("extdata", "gnn_results.rds", package = "fairGNN")
+expert_analyses_path <- system.file("extdata", "expert_analyses.rds", package = "fairGNN")
+gnn_results <- readRDS(gnn_results_path)
+expert_analyses <- readRDS(expert_analyses_path)
 ```
 
 ## 2.4. Step 3: Analyse Basic Performance and Gates
@@ -102,31 +103,46 @@ basic_analyses <- analyse_gnn_results(
   prepared_data = prepared_data_gender,
   group_mappings = label_mappings_gender
 )
+```
 
-# --- View all plots from the basic analysis ---
-cat("## ROC Curve\n")
-print(basic_analyses$roc_plot)
+### ROC Curve
 
-cat("\n## Calibration Plot\n")
-print(basic_analyses$calibration_plot)
+```{r}
+basic_analyses$roc_plot
+```
 
-cat("\n## Gate Weight Distribution\n")
-print(basic_analyses$gate_density_plot)
+### Calibration Plot
 
-cat("\n## Gate Entropy Distribution\n")
-print(basic_analyses$entropy_density_plot)
+```{r}
+basic_analyses$calibration_plot
+```
+
+### Gate Weight Distribution
+
+```{r}
+basic_analyses$gate_density_plot
+```
+
+### Gate Entropy Distribution
+
+```{r}
+basic_analyses$entropy_density_plot
 ```
 
 ## 2.5. Step 4: Analyse Expert Specialisation
 
 Now, we use `analyse_experts()` to investigate how the different expert networks have specialised their learning.
 
+### Feature Importance: Female vs. Male
+
 ```{r}
-# --- View all results from the expert analysis ---
-cat("\n## Feature Importance: Female vs. Male\n")
 # This table shows the features with the biggest difference in importance between the two experts.
 print(head(expert_analyses$pairwise_differences$Female_vs_Male))
+```
 
+### Feature Importance Difference Plot
+
+```{r}
 cat("\n## Feature Importance Difference Plot\n")
 # This plot visualises the differences from the table above.
 print(expert_analyses$difference_plot)
@@ -137,7 +153,7 @@ print(expert_analyses$difference_plot)
 Finally, we use `plot_sankey()` to create the key visualisation from the research paper, showing how patients are routed through the model.
 
 ```{r}
-# Generate and print the Sankey plot
+# Generate the Sankey plot
 sankey_diagram <- plot_sankey(
     raw_data = raw_data,
     gnn_results = gnn_results,
@@ -146,5 +162,5 @@ sankey_diagram <- plot_sankey(
     group_var = "sex"
 )
 
-print(sankey_diagram)
+sankey_diagram
 ```
